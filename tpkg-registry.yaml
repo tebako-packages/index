@@ -1,0 +1,9 @@
+schema_version: 1
+# The tebako-packages catalog (registry-of-registries). Each entry is a
+# feedstock's own registry; the dispatcher resolves nicknames through it.
+# Entries are added when a feedstock publishes its first release.
+packages:
+  - name: inkscape
+    kind: toolkit
+    summary: Vector graphics editor (CLI tools) — metanorma's graphics chain
+    registry: tfs:github:tebako-packages/inkscape

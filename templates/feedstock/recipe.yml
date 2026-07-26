@@ -1,0 +1,30 @@
+# Feedstock recipe for @@NAME@@
+# spec 13 §9 + docs/conventions.md in tebako-packages/index
+name: "@@NAME@@"
+kind: toolkit
+summary: "@@SUMMARY@@"
+
+upstream:
+  url: "@@UPSTREAM_TARBALL_URL@@"
+  sha256: "@@UPSTREAM_SHA256@@"
+  version: "@@UPSTREAM_VERSION@@"
+
+build:
+  system: autotools        # autotools | cmake | meson
+  link_mode: dynamic       # dynamic | wrapped | tfs-native | static
+  rpath_origin: true       # $ORIGIN/../lib for dynamic builds
+  deps: []                 # other feedstocks: [{name, constraint, mount}]
+
+platforms:
+  - x86_64-linux-gnu
+  - aarch64-linux-gnu
+  - aarch64-macos
+  - x86_64-macos
+
+provides:
+  executables:
+    - {name: "@@NAME@@", path: "/bin/@@NAME@@", version: "@@UPSTREAM_VERSION@@"}
+  libraries: []
+
+exec_tier: dynamic         # from build.link_mode
+exec_closure: []           # static tier only
