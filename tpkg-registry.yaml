@@ -7,6 +7,10 @@ packages:
     kind: toolkit
     summary: Vector graphics editor (CLI tools) — metanorma's graphics chain
     registry: tfs:github:tebako-packages/inkscape
+  - name: fontist
+    kind: app
+    summary: Font installer CLI (ruby app; runtime-required payload, ruby ~> 3.3.0 ABI)
+    registry: tfs:github:tebako-packages/fontist
   - name: hello
     kind: toolkit
     summary: GNU hello — template prover payload for tebako-packages
