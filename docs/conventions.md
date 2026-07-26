@@ -24,3 +24,12 @@
   extraction where the tier allows) before the release publishes.
 - CI legs are one mechanical press per triplet; per-platform handling
   is a recipe feature, not a hack.
+
+## Release hosting (locked)
+
+Every package's BUILT PAYLOADS — platform-specific or platform-free
+(universal) — are published as GitHub releases **in the package's own
+feedstock repo** (artifacts + SHA256SUMS + its `tpkg-registry.yaml`).
+Nothing is hosted centrally: the index repo carries only the catalog
+entries pointing at each feedstock's own releases. A package's
+artifacts never live in the index, and never in another org's repo.
