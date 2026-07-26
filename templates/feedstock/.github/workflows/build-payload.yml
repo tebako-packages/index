@@ -17,6 +17,7 @@ jobs:
     outputs:
       legs: ${{ steps.m.outputs.legs }}
     steps:
+      - uses: actions/checkout@11bd7190a326750d5838078e36cf38b85af6772621 # v4.2.2
       - id: m
         run: |
           # The matrix is EMITTED from recipe.yml (YAML stays thin;
@@ -36,9 +37,15 @@ jobs:
       - name: Build ${{ matrix.version }} (${{ matrix.platform }})
         run: tools/build recipe.yml "${{ matrix.version }}" "${{ matrix.platform }}"
       - name: Boot-smoke
-        run: tools/boot_smoke "out/${{ matrix.platform }}" || true  # advisory until phase A proves
+        # Hard rule (docs/conventions.md): the packaged tool's --version
+        # runs from the image before any release publishes.
+        run: tools/boot_smoke "out/${{ matrix.platform }}"
       - name: Stage artifact
         run: tools/stage "out/${{ matrix.platform }}" "${{ matrix.platform }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/
 
   release:
     name: publish
@@ -46,5 +53,14 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@11bd7190a326750d5838078e36cf38b85af6772621 # v4.2.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
       - name: Publish payloads + registry
-        run: tools/publish  # artifacts per triplet + SHA256SUMS + registry yaml pinned
+        # artifacts per triplet + SHA256SUMS + the resolved tpkg-registry.yaml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: tools/publish

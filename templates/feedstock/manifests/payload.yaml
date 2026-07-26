@@ -20,6 +20,6 @@ provides:
   libraries: []
 exec_tier: dynamic
 exec_closure: []
-platforms: [x86_64-linux-gnu, aarch64-linux-gnu, aarch64-macos, x86_64-macos]
+platforms: @@PLATFORMS@@    # JSON/YAML flow list, filled by tools/stage from recipe.yml
 capabilities: {exec: true, read: true}
 requires: []             # toolkit deps: {kind: toolkit, name, constraint, mount}

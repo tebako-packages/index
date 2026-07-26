@@ -15,6 +15,13 @@ build:
   rpath_origin: true       # $ORIGIN/../lib for dynamic builds
   deps: []                 # other feedstocks: [{name, constraint, mount}]
 
+# Factory tools used by tools/build (image creation). The dwarfs-t
+# mkdwarfs/tebakofs binaries ship as per-platform assets of libtfs
+# releases; every download is verified against the release's SHA256SUMS.
+tools:
+  repo: "tamatebako/libtfs"
+  release: "v0.13.0"
+
 platforms:
   - x86_64-linux-gnu
   - aarch64-linux-gnu
