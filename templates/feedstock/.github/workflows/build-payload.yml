@@ -18,7 +18,7 @@ jobs:
     outputs:
       legs: ${{ steps.m.outputs.legs }}
     steps:
-      - uses: actions/checkout@11bd7190a326750d5838078e36cf38b85af6772621 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: m
         run: |
           # The matrix is EMITTED from recipe.yml (YAML stays thin;
@@ -34,7 +34,7 @@ jobs:
       matrix: ${{ fromJSON(needs.matrix.outputs.legs) }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11bd7190a326750d5838078e36cf38b85af6772621 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build ${{ matrix.version }} (${{ matrix.platform }})
         run: tools/build recipe.yml "${{ matrix.version }}" "${{ matrix.platform }}"
       - name: Boot-smoke
@@ -54,7 +54,7 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd7190a326750d5838078e36cf38b85af6772621 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: dist-*
