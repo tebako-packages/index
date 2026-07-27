@@ -11,6 +11,10 @@ packages:
     kind: app
     summary: Font installer CLI (ruby app; runtime-required payload, ruby ~> 3.3.0 ABI)
     registry: tfs:github:tebako-packages/fontist
+  - name: metanorma
+    kind: app
+    summary: Standards-document authoring CLI (ruby app; requires toolkit inkscape at /opt/inkscape)
+    registry: tfs:github:tebako-packages/metanorma
   - name: hello
     kind: toolkit
     summary: GNU hello — template prover payload for tebako-packages
