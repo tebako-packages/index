@@ -15,12 +15,20 @@ build:
   rpath_origin: true       # $ORIGIN/../lib for dynamic builds
   deps: []                 # other feedstocks: [{name, constraint, mount}]
 
-# Factory tools used by tools/build (image creation). The dwarfs-t
-# mkdwarfs/tebakofs binaries ship as per-platform assets of libtfs
-# releases; every download is verified against the release's SHA256SUMS.
+# Image tooling (every leg): the tfs CLI from the tamatebako/tebako
+# release — `tfs mkimage` (limnifs, the default tebako image format) is
+# the imager and the boot smoke's info/tree/extract reader. The
+# per-platform asset digests are pinned here (the repo's toolchain pin
+# SSOT — the same trust-anchor role as upstream.sha256) and
+# cross-checked against the release's own SHA256SUMS at fetch time.
 tools:
-  repo: "tamatebako/libtfs"
-  release: "v0.13.0"
+  repo: "tamatebako/tebako"
+  release: "@@TEBAKO_RELEASE@@"
+  sha256:
+    linux-gnu-x86_64: "@@TFS_SHA256_LINUX_GNU_X86_64@@"
+    linux-gnu-arm64: "@@TFS_SHA256_LINUX_GNU_ARM64@@"
+    macos-arm64: "@@TFS_SHA256_MACOS_ARM64@@"
+    macos-x86_64: "@@TFS_SHA256_MACOS_X86_64@@"
 
 platforms:
   - x86_64-linux-gnu
