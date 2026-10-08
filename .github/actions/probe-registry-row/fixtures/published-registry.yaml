@@ -1,0 +1,20 @@
+schema_version: 1
+# Fixture for the probe-registry-row self-test (test-probe-registry-row.yml):
+# a primitive-only registry with a constrained row, a flavor row on a
+# different constraint, and a row with no runtime_requirement at all.
+payloads:
+  - name: metanorma
+    kind: app
+    versions:
+      - version: 1.17.0
+        platforms: universal
+        release: {ref: tfs:github:example/metanorma:1.17.0}
+        runtime_requirement: {engine: ruby, constraint: "~> 4.0.0"}
+      - version: 1.17.0-ruby3.3
+        platforms: universal
+        release: {ref: tfs:github:example/metanorma:1.17.0-2}
+        runtime_requirement: {engine: ruby, constraint: "~> 3.3.0"}
+      - version: 2.0.0
+        platforms: universal
+        release: {ref: tfs:github:example/metanorma:2.0.0}
+    default: 1.17.0

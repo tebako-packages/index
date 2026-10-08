@@ -1,0 +1,106 @@
+name: test-probe-registry-row
+# Self-test of the shared probe-registry-row composite action: the truth
+# table against a checked-in fixture registry (file:// — hermetic), one
+# live leg against a real published registry (the https path the
+# feedstocks ride), and the fetch-failure discipline (a dead URL reds
+# the gate, never a silent skip).
+on:
+  push:
+    branches: [main]
+    paths: [".github/actions/probe-registry-row/**", ".github/workflows/test-probe-registry-row.yml"]
+  pull_request:
+    paths: [".github/actions/probe-registry-row/**", ".github/workflows/test-probe-registry-row.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fixture-truth-table:
+    name: fixture rows (file://)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: match
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ github.workspace }}/.github/actions/probe-registry-row/fixtures/published-registry.yaml
+          payload: metanorma
+          version: 1.17.0
+          constraint: "~> 4.0.0"
+      - name: a row on the expected constraint is published
+        run: test "${{ steps.match.outputs.published }}" = "true"
+
+      - id: skew
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ github.workspace }}/.github/actions/probe-registry-row/fixtures/published-registry.yaml
+          payload: metanorma
+          version: 1.17.0-ruby3.3
+          constraint: "~> 4.0.0"
+      - name: a row on the wrong constraint is not published (mid-flip skew)
+        run: test "${{ steps.skew.outputs.published }}" = "false"
+
+      - id: absent
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ github.workspace }}/.github/actions/probe-registry-row/fixtures/published-registry.yaml
+          payload: metanorma
+          version: 9.9.9
+      - name: a missing row is not published
+        run: test "${{ steps.absent.outputs.published }}" = "false"
+
+      - id: presence
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ github.workspace }}/.github/actions/probe-registry-row/fixtures/published-registry.yaml
+          payload: metanorma
+          version: 1.17.0-ruby3.3
+      - name: with no constraint input, the row's presence is enough
+        run: test "${{ steps.presence.outputs.published }}" = "true"
+
+      - id: constraintless-row
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ github.workspace }}/.github/actions/probe-registry-row/fixtures/published-registry.yaml
+          payload: metanorma
+          version: 2.0.0
+          constraint: "~> 4.0.0"
+      - name: a constraint against a row that carries none is not published
+        run: test "${{ steps.constraintless-row.outputs.published }}" = "false"
+
+      - id: dead
+        continue-on-error: true
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: file://${{ runner.temp }}/no-such-registry.yaml
+          payload: metanorma
+          version: 1.17.0
+      - name: a fetch failure reds the gate (transient is never absence)
+        run: test "${{ steps.dead.outcome }}" = "failure"
+
+  live-registry:
+    name: live published registry (https)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: live-match
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: https://raw.githubusercontent.com/tebako-packages/metanorma/main/tpkg-registry.yaml
+          payload: metanorma
+          version: 1.17.0-ruby3.3
+          constraint: "~> 3.3.0"
+      - name: the published flavor row resolves on its constraint
+        run: test "${{ steps.live-match.outputs.published }}" = "true"
+
+      - id: live-absent
+        uses: ./.github/actions/probe-registry-row
+        with:
+          registry-url: https://raw.githubusercontent.com/tebako-packages/metanorma/main/tpkg-registry.yaml
+          payload: metanorma
+          version: 9.9.9
+      - name: an unpublished version is not published
+        run: test "${{ steps.live-absent.outputs.published }}" = "false"

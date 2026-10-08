@@ -37,3 +37,23 @@ a packaging re-release of the same upstream (`1.3.2-2`).
 Landing a new package: copy the template, fill the recipe, open the
 feedstock, then add its registry entry to `tpkg-registry.yaml` here.
 See `docs/conventions.md`.
+
+## Shared actions
+
+- **`.github/actions/probe-registry-row`** — the "is the row published
+  yet?" gate for feedstock CI: does `<payload>@<version>` exist in a
+  published registry (optionally on an expected runtime constraint)? A
+  registry fetch failure fails the step (a transient error is never
+  absence); a missing or skewed row sets `published=false` so gated
+  legs skip loudly instead of running red. Feedstock workflows consume
+  the one implementation here — never a per-repo copy:
+
+  ```yaml
+  - id: probe
+    uses: tebako-packages/index/.github/actions/probe-registry-row@main
+    with:
+      registry-url: https://raw.githubusercontent.com/<org>/<feedstock>/main/tpkg-registry.yaml
+      payload: <name>
+      version: <version>
+      constraint: <expected runtime constraint>   # optional — empty means presence is enough
+  ```
