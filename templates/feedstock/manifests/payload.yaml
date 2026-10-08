@@ -9,7 +9,14 @@ identity:
   created: "@@CREATED@@"
   source: {src_sha256: "@@UPSTREAM_SHA256@@", commit: "@@FEEDSTOCK_SHA@@", builder: "gha"}
   digest:
-    tree_hash: ""        # merkle root when the CAS lands (spec 03)
+    # The placeholder convention (a valid "<algorithm>:<64 hex>" value —
+    # the tpkg model rejects an empty tree_hash, and install parses tier 1
+    # strictly). Every leg is packed by `tfs mkimage`, which stamps the
+    # REAL tfs-merkle-1 root over this placeholder at image creation
+    # (spec 03 §7: the hash excludes /__tpkg__/, so the stamp is a fixed
+    # point); the artifact's blob digest only ever rides the .sha256
+    # sidecar / the registry pin.
+    tree_hash: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     blob_sha256: "@@BLOB_SHA256@@"
   signing: {state: unsigned}
   encryption: {state: none}
@@ -18,8 +25,9 @@ provides:
   executables:
     - {name: "@@NAME@@", path: "/bin/@@NAME@@", version: "@@VERSION@@"}
   libraries: []
-exec_tier: dynamic
-exec_closure: []
-platforms: @@PLATFORMS@@    # JSON/YAML flow list, filled by tools/stage from recipe.yml
-capabilities: {exec: true, read: true}
+  # platforms/capabilities live INSIDE provides (the model's toolkit
+  # provides block) — the top-level spellings of the pre-model template
+  # fail install by name ("missing field `platforms`", exit 65).
+  platforms: @@PLATFORMS@@    # JSON/YAML flow list, filled by tools/stage from recipe.yml
+  capabilities: {exec: true, read: true}
 requires: []             # toolkit deps: {kind: toolkit, name, constraint, mount}

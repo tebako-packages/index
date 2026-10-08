@@ -1,13 +1,16 @@
 # Feedstock conventions (spec 13 §9)
 
-## Link modes and exec tiers (spec 07 §8)
+## Link modes
 
-| recipe `link_mode` | exec_tier | how it runs |
-|--------------------|-----------|-------------|
-| `dynamic` | `dynamic` | preload interposition shim (libtfs-preload) — VFS + jails, no extraction. DEFAULT. |
-| `wrapped` | `wrapped` | link-time interposition archive inside the binary — no LD_PRELOAD at run time |
-| `tfs-native` | `tfs-native` | source patches + libtfs linked (the ruby model) — survives static linking |
-| `static` | `static` | plain static — extraction closure, no TFS, no jails |
+| recipe `link_mode` | how it runs |
+|--------------------|-------------|
+| `dynamic` | preload interposition shim (libtfs-preload) — VFS + jails, no extraction. DEFAULT. |
+| `wrapped` | link-time interposition archive inside the binary — no LD_PRELOAD at run time |
+| `tfs-native` | source patches + libtfs linked (the ruby model) — survives static linking |
+| `static` | plain static — extraction closure, no TFS, no jails |
+
+`link_mode` is the whole story: it lives in the recipe, and the payload
+manifest carries no per-executable run-mode keys.
 
 ## Hard rules
 
