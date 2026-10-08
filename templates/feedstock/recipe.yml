@@ -41,5 +41,7 @@ provides:
     - {name: "@@NAME@@", path: "/bin/@@NAME@@", version: "@@UPSTREAM_VERSION@@"}
   libraries: []
 
-exec_tier: dynamic         # from build.link_mode
-exec_closure: []           # static tier only
+# NOTE: the payload manifest model carries no exec_tier/exec_closure keys
+# (retired from the model — tolerated-but-dropped on parse): build.link_mode
+# above is the whole story, and the manifest template under manifests/
+# carries platforms/capabilities INSIDE provides:.

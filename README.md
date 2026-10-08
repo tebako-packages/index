@@ -21,12 +21,12 @@ Each package is a **feedstock repo** in this org, created from
 `templates/feedstock/`. A feedstock carries:
 
 - `recipe.yml` — upstream source (url + sha256), versions, build
-  system, link mode → exec tier (`dynamic` | `wrapped` | `tfs-native` |
+  system, link mode (`dynamic` | `wrapped` | `tfs-native` |
   `static`), deps on other feedstocks, platforms (triplets).
 - `patches/` — per-version patch sets (tamatebako/ruby naming rules:
   whole-line `-x-` default, exact-version supersede).
 - `manifests/` — payload manifest templates (spec 03: IDENTITY /
-  PROVIDES / DEPENDS, `exec_tier`, `exec_closure`).
+  PROVIDES / DEPENDS).
 - `.github/workflows/` — build matrix per triplet, boot-smoke,
   release per (tool × upstream version), filling the manifest from
   the recipe.
