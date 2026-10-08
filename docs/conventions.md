@@ -24,6 +24,10 @@
   extraction where the tier allows) before the release publishes.
 - CI legs are one mechanical press per triplet; per-platform handling
   is a recipe feature, not a hack.
+- Legs that depend on a row being published already (dogfood,
+  acceptance) gate through the shared
+  `.github/actions/probe-registry-row` composite action in this repo —
+  never a per-repo probe copy.
 
 ## Release hosting (locked)
 

@@ -1,0 +1,70 @@
+name: probe-registry-row
+description: >-
+  Gate on a published registry row: is <payload>@<version> in the
+  published registry yet — optionally on an expected runtime constraint?
+  A registry fetch failure fails the step (a transient error is never
+  absence); a missing or skewed row sets the published output to false
+  so dependent jobs and steps skip loudly instead of running red.
+inputs:
+  registry-url:
+    description: "URL of the published tpkg-registry.yaml to probe (https:// or file://)."
+    required: true
+  payload:
+    description: "The payload name to look up in the registry."
+    required: true
+  version:
+    description: "The payload version to look up."
+    required: true
+  constraint:
+    description: "The runtime constraint the row must carry (runtime_requirement.constraint). Empty: the row's presence is enough."
+    required: false
+    default: ""
+outputs:
+  published:
+    description: "'true' when the row is published (and on the expected constraint, when one is given); else 'false'."
+    value: ${{ steps.probe.outputs.published }}
+runs:
+  using: composite
+  steps:
+    - id: probe
+      shell: bash
+      env:
+        REGISTRY_URL: ${{ inputs.registry-url }}
+        PAYLOAD: ${{ inputs.payload }}
+        VERSION: ${{ inputs.version }}
+        CONSTRAINT: ${{ inputs.constraint }}
+      run: |
+        set -euo pipefail
+        # A fetch failure is NOT absence: raw's edge cache and other
+        # transient errors must red the gate, never silently skip the
+        # legs it guards.
+        curl -sfL --retry 4 --retry-all-errors --retry-delay 5 "$REGISTRY_URL" -o "$RUNNER_TEMP/probed-registry.yaml" \
+          || { echo "::error::registry fetch failed ($REGISTRY_URL) — the gate cannot decide; failing loudly, retry the job"; exit 1; }
+        ruby -ryaml -e '
+          reg, name, ver, constraint = ARGV
+          # A registry is primitive-only (strings, numbers, lists, maps),
+          # so plain load_file parses one on every Psych line — the
+          # safe-by-default split of Psych 4+ never bites.
+          doc = YAML.load_file(reg)
+          row = doc.fetch("payloads").find { |p| p["name"] == name }
+                    &.fetch("versions", [])
+                    &.find { |v| v["version"].to_s == ver }
+          out = File.open(ENV.fetch("GITHUB_OUTPUT"), "a")
+          if row.nil?
+            puts "::notice::#{name}@#{ver} is not in the published registry yet — its tag publishes it; skipping the gated legs loudly"
+            out.puts "published=false"
+            exit 0
+          end
+          actual = row.dig("runtime_requirement", "constraint")
+          if !constraint.empty? && actual != constraint
+            puts "::notice::#{name}@#{ver} is published with runtime constraint \"#{actual || "absent"}\" but \"#{constraint}\" is expected — mid-flip skew; the re-cut tag re-publishes the row, skipping the gated legs loudly"
+            out.puts "published=false"
+            exit 0
+          end
+          if constraint.empty?
+            puts "#{name}@#{ver} is in the published registry — the gated legs run"
+          else
+            puts "#{name}@#{ver} is in the published registry on the expected runtime constraint (#{constraint}) — the gated legs run"
+          end
+          out.puts "published=true"
+        ' "$RUNNER_TEMP/probed-registry.yaml" "$PAYLOAD" "$VERSION" "$CONSTRAINT"
