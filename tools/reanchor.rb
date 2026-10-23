@@ -168,12 +168,13 @@ def rewrite_scalars(text, anchors)
   lines.join
 end
 
-options = { check: false }
+options = { check: false, keep: [] }
 OptionParser.new do |opts|
   opts.banner = "usage: reanchor.rb --tebakofile <path> --release <vX.Y.Z> [--check]"
   opts.on("--tebakofile PATH") { |v| options[:tebakofile] = v }
   opts.on("--release TAG") { |v| options[:release] = v.delete_prefix("v") }
   opts.on("--check") { options[:check] = true }
+  opts.on("--keep PREFIX[,PREFIX]") { |v| options[:keep] = v.split(",").map(&:strip) }
 end.parse!
 
 die "--tebakofile is required" if options[:tebakofile].nil?
@@ -184,9 +185,17 @@ version = options[:release]
 text = File.read(options[:tebakofile])
 sums = sha256sums(version)
 anchors = reanchor(text, version, sums)
+# A nested arm may deliberately sit on an older line (truffleruby's jvm
+# arm is the live example): --keep <path-prefix> leaves it untouched, and
+# the report names what was kept so the PR says so out loud.
+kept, anchors = anchors.partition do |anchor|
+  options[:keep].any? { |prefix| anchor.path.join(".").start_with?(prefix) }
+end
 
 drift = anchors.reject { |a| a.old == a.new }
 skipped = anchors.select { |a| a.old.nil? }
+
+kept.each { |anchor| puts "  kept (--keep): #{anchor.path.join('.')} stays #{anchor.old}" }
 
 if drift.empty?
   puts "reanchor: #{options[:tebakofile]} is in sync with v#{version} (#{anchors.length} pins)"
