@@ -78,3 +78,40 @@ The rules (hello 2.12.2 is the reference implementation):
   run.** tebako ≥ 2.6.0 embeds the tamatebako root public key, so a
   signed feedstock's payloads verify with zero key registration;
   `TEBAKO_REQUIRE_SIGNED=1` fails closed on unsigned payloads.
+
+## Toolchain pins: rolling the line (locked)
+
+A feedstock's `Tebakofile` carries its tebako pins: `tools.release` (the
+tools line), `tools.sha256.tfs.<platform>`, `tools.sha256.link-unit.<platform>`,
+and — for a runtime feedstock — `wrapper_tebako` plus
+`wrapper_sha256.<platform>` for every flavor arm.
+
+**Every one of those values is read from the release, never typed from
+memory.** `tools/reanchor.rb` is the one procedure:
+
+```console
+$ ruby index/tools/reanchor.rb --tebakofile <feedstock>/Tebakofile --release v2.8.57 --check
+$ ruby index/tools/reanchor.rb --tebakofile <feedstock>/Tebakofile --release v2.8.57
+```
+
+- `--check` reports every drifted pin and writes nothing (exit 1 on
+  drift) — the review and CI posture.
+- The write mode edits ONLY the quoted values on the lines whose YAML
+  path resolves to a pin. Comments, ordering, spacing and every other key
+  stay byte-identical: a recipe is prose as much as data, and a
+  serializer round-trip would destroy the reasoning that lives in it.
+- Sources: `tfs-<ver>-<platform>[.exe]` and
+  `tebako-runtime-launcher-<ver>-<platform>[.exe]` come from the
+  release's `SHA256SUMS`; `link-unit-<ver>-<platform>.tar.gz` is hashed
+  from the asset itself, because the monolith does not carry it.
+- After writing, the tool re-resolves the file and fails if any pin still
+  drifts. The `verified 0 drift` line is the evidence a roll needs, and
+  it belongs in the PR body.
+- A nested flavor arm carrying its own `wrapper_tebako` is rewritten like
+  any other arm. An arm that must stay on an older line is stated in the
+  PR — never left to chance.
+
+**Idempotence is the tool's own acceptance test.** Run it against the
+release a feedstock ALREADY pins: it must report `in sync` with zero
+drift. A tool that cannot reproduce the pins that are already there
+cannot be trusted to move them.
