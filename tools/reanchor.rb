@@ -220,6 +220,11 @@ File.write(options[:tebakofile], out)
 
 # Verify what we wrote: re-resolve the written file and prove zero drift.
 verify = reanchor(File.read(options[:tebakofile]), version, sums)
+# The verification pass must apply the SAME --keep filter as the write, or
+# a deliberately-kept arm reads as drift the tool itself created.
+verify, = verify.partition do |anchor|
+  options[:keep].any? { |prefix| anchor.path.join(".").start_with?(prefix) }
+end
 remaining = verify.reject { |a| a.old == a.new }
 die "the write did not converge: #{remaining.map { |a| a.path.join('.') }.join(', ')}" if remaining.any?
 
