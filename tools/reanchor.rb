@@ -13,6 +13,10 @@
 #   tools.sha256.link-unit.<platform> -> the `link-unit-<ver>-<platform>.tar.gz`
 #                                        asset, hashed from the asset itself
 #                                        (the monolith does not carry these)
+#   tools.sha256.tebako-shim.<platform> -> SHA256SUMS' `tebako-shim-<ver>-<platform>`
+#                                        row (the dispatcher the order/slice arms
+#                                        consume; absent on windows-ucrt-arm64,
+#                                        which the recipe declares)
 #   <arm>.wrapper_tebako              -> "<ver>" (every arm, nested flavors included)
 #   <arm>.wrapper_sha256.<platform>   -> SHA256SUMS' `tebako-runtime-launcher-<ver>-<platform>` row
 #
@@ -73,6 +77,7 @@ def asset_name(kind, version, platform)
   when :tfs then "tfs-#{version}-#{platform}#{exe}"
   when :launcher then "tebako-runtime-launcher-#{version}-#{platform}#{exe}"
   when :link_unit then "link-unit-#{version}-#{platform}.tar.gz"
+  when :shim then "tebako-shim-#{version}-#{platform}#{exe}"
   end
 end
 
@@ -133,6 +138,7 @@ def reanchor(text, version, sums)
         if path.include?("wrapper_sha256") then :launcher
         elsif path.include?("sha256") && path.include?("tfs") then :tfs
         elsif path.include?("sha256") && path.include?("link-unit") then :link_unit
+        elsif path.include?("sha256") && path.include?("tebako-shim") then :shim
         end
       next if kind.nil?
 
