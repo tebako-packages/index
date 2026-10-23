@@ -34,8 +34,10 @@
 # Ruby stdlib only; the factories run this from CI or a workstation.
 
 require "digest"
+require "fileutils"
 require "net/http"
 require "optparse"
+require "tmpdir"
 require "uri"
 
 REPO = "tamatebako/tebako"
@@ -84,11 +86,46 @@ end
 def asset_sha(sums, version, kind, platform)
   name = asset_name(kind, version, platform)
   if kind == :link_unit
-    # Not in the monolith: hash the asset the release serves.
-    body = fetch("#{BASE}/v#{version}/#{name}")
-    return Digest::SHA256.hexdigest(body)
+    # Not in the monolith: hash the asset the release serves. These run to
+    # ~110 MB and the verification pass re-resolves every anchor, so the
+    # digest is cached on disk by asset name (which carries the version):
+    # one download per asset per machine, not per pass.
+    return cached_asset_sha("#{BASE}/v#{version}/#{name}", name)
   end
   sums[name] || die("the release has no #{name} row in SHA256SUMS")
+end
+
+def cached_asset_sha(url, name)
+  dir = ENV.fetch("TEBAKO_REANCHOR_CACHE", File.join(Dir.tmpdir, "tebako-reanchor-cache"))
+  FileUtils.mkdir_p(dir)
+  path = File.join(dir, "#{name}.sha256")
+  return File.read(path).strip if File.file?(path)
+
+  digest = Digest::SHA256.hexdigest(fetch(url))
+  tmp = "#{path}.#{Process.pid}.tmp"
+  File.write(tmp, "#{digest}\n")
+  File.rename(tmp, path)
+  digest
+end
+
+# A trailing `# comment` is stripped only when it is outside quotes and
+# starts a word. `each_line` keeps the newline, so the pattern has to stop
+# at end-of-LINE: the old `#.*\z` could never match a line that ends in
+# "\n", which left the comment in the value. A family header written with a
+# trailing comment (`link-unit:  # POSIX legs only`) then read as
+# "key: value" instead of a parent, and every pin beneath it fell out of
+# the path — silently, because the write and the verification pass shared
+# the same blind spot.
+def strip_comment(line)
+  quoted = false
+  line.each_char.with_index do |char, index|
+    if char == '"'
+      quoted = !quoted
+    elsif char == "#" && !quoted && (index.zero? || line[index - 1].match?(/\s/))
+      return line[0...index]
+    end
+  end
+  line
 end
 
 # Split a Tebakofile into lines, tracking each line's YAML path. The
@@ -98,7 +135,7 @@ end
 def scan(text)
   stack = []
   text.each_line.with_index.map do |line, index|
-    stripped = line.sub(/#.*\z/, "").rstrip
+    stripped = strip_comment(line).rstrip
     if stripped.strip.empty?
       stack = stack
       next [index, nil, nil, line]
@@ -153,6 +190,25 @@ def reanchor(text, version, sums)
     next unless anchor.new == :resolve
     anchor.new = asset_sha(sums, version, anchor.kind, anchor.platform)
   end
+
+  # Completeness guard. The tool owns two families — `tools.sha256.*` and
+  # `<arm>.wrapper_sha256.*` — and every digest inside them must have been
+  # classified; one it cannot classify is a blind spot, not a key it declines
+  # to own. Digests elsewhere in the file (an upstream tarball's, say) belong
+  # to their own owner and are none of this tool's business. This is the check
+  # that would have caught the commented family header: the write pass and the
+  # verification pass both skipped those pins, so "verified 0 drift" was true
+  # and worthless.
+  owned = ->(path) { path[0, 2] == %w[tools sha256] || path.include?("wrapper_sha256") }
+  anchored = anchors.map(&:line_index)
+  scan(text).each do |index, path, _value, line|
+    next if path.nil? || !owned.call(path)
+    next unless line.match?(/\b[0-9a-f]{64}\b/)
+    next if anchored.include?(index)
+
+    die "line #{index + 1} (#{path.join('.')}) carries a digest but no pin kind resolved it"
+  end
+
   anchors
 end
 
