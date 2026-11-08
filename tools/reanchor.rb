@@ -9,6 +9,8 @@
 # What it anchors (every value is READ FROM THE RELEASE, never assumed):
 #
 #   tools.release                     -> "v<ver>"
+#   tools.sha256.tebako.<platform>    -> SHA256SUMS' `tebako-<ver>-<platform>`
+#                                        row (the CLI)
 #   tools.sha256.tfs.<platform>       -> SHA256SUMS' `tfs-<ver>-<platform>` row
 #   tools.sha256.link-unit.<platform> -> the `link-unit-<ver>-<platform>.tar.gz`
 #                                        asset, hashed from the asset itself
@@ -76,6 +78,7 @@ end
 def asset_name(kind, version, platform)
   exe = platform.start_with?("windows") && kind != :link_unit ? ".exe" : ""
   case kind
+  when :cli then "tebako-#{version}-#{platform}#{exe}"
   when :tfs then "tfs-#{version}-#{platform}#{exe}"
   when :launcher then "tebako-runtime-launcher-#{version}-#{platform}#{exe}"
   when :link_unit then "link-unit-#{version}-#{platform}.tar.gz"
@@ -176,6 +179,7 @@ def reanchor(text, version, sums)
         elsif path.include?("sha256") && path.include?("tfs") then :tfs
         elsif path.include?("sha256") && path.include?("link-unit") then :link_unit
         elsif path.include?("sha256") && path.include?("tebako-shim") then :shim
+        elsif path.include?("sha256") && path.include?("tebako") then :cli
         end
       next if kind.nil?
 
