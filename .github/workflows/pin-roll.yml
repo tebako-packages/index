@@ -1,0 +1,149 @@
+name: pin-roll
+# The factory tools-pin roll, automated (tamatebako/tebako#991): a tebako
+# release publishes → every Tebakofile repo gets a bump PR with
+# tools.release + every tools.sha256.* digest re-anchored to the release's
+# own SHA256SUMS, byte-verified by tools/reanchor.rb (the maintained
+# oracle — the roll is its --check, never a hand edit). The PR rides the
+# repo's normal CI and merges on green.
+#
+# Triggers: a daily poll (a missed repository_dispatch costs a day, not
+# the roll), the tebako release's dispatch (the immediate path), and a
+# manual run with an explicit tag for repairs.
+#
+# The contract.yml pair (tebako-runtime-ruby, tebako-runtime-python —
+# link_unit_release, not a Tebakofile) is the named follow-up, not a gap
+# hidden here.
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  repository_dispatch:
+    types: [tebako-release]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "the tebako release tag to roll to (default: the repo's latest)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.release }}"
+          if [ -z "$tag" ]; then
+            tag="${{ github.event.client_payload.tag }}"
+          fi
+          if [ -z "$tag" ]; then
+            tag="$(gh release view --repo tamatebako/tebako --json tagName --jq .tagName)"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::not a tebako release tag: '$tag'"; exit 1;;
+          esac
+          # The release must actually serve SHA256SUMS — a draft or a
+          # mid-flight release is not a roll target.
+          gh release view "$tag" --repo tamatebako/tebako --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "rolling to $tag"
+
+  roll:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # tebako-packages feedstocks
+          - repo: tebako-packages/metanorma
+          - repo: tebako-packages/tebako-cli
+          - repo: tebako-packages/hello
+          - repo: tebako-packages/fontist
+          - repo: tebako-packages/inkscape
+          - repo: tebako-packages/xml2rfc
+          # the Tebakofile runtime factories
+          - repo: tamatebako/tebako-runtime-node
+          - repo: tamatebako/tebako-runtime-bun
+          - repo: tamatebako/tebako-runtime-openjdk
+          - repo: tamatebako/tebako-runtime-jruby
+          - repo: tamatebako/tebako-runtime-truffleruby
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # this repo's tools/reanchor.rb is the roller
+
+      - name: Guard the token
+        run: |
+          if [ -z "${TEBAKO_CI_PAT_TOKEN:-}" ]; then
+            echo "::error::TEBAKO_CI_PAT_TOKEN is not visible to this workflow — the roll opens PRs across two orgs and needs it (org secret, both orgs)"
+            exit 1
+          fi
+        env:
+          TEBAKO_CI_PAT_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+
+      - name: Clone the repo
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh repo clone "${{ matrix.repo }}" work -- --depth 20
+          cd work
+          git config user.name "tamatebako-ci"
+          git config user.email "tebako@ribose.com"
+
+      - name: Re-anchor against ${{ needs.resolve.outputs.tag }}
+        id: roll
+        working-directory: work
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ruby ../tools/reanchor.rb --tebakofile Tebakofile --release "$TAG" --check > ../drift.txt 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            cat ../drift.txt
+          else
+            rc=$?
+            cat ../drift.txt
+            [ "$rc" -eq 1 ] || { echo "::error::reanchor failed (exit $rc) — a named failure, not drift"; exit "$rc"; }
+            ruby ../tools/reanchor.rb --tebakofile Tebakofile --release "$TAG" >> ../drift.txt 2>&1
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the bump PR on drift
+        if: steps.roll.outputs.changed == 'true'
+        working-directory: work
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="chore/tebako-$TAG"
+          if gh pr list --repo "${{ matrix.repo }}" --state open --head "$branch" --json number --jq length | grep -qx 1; then
+            echo "a $branch PR is already open on ${{ matrix.repo }} — nothing to do"
+            exit 0
+          fi
+          git checkout -b "$branch"
+          git add Tebakofile
+          git commit -m "tools: pin tebako $TAG
+
+          The automated pin roll (tebako-packages/index's pin-roll
+          workflow): every tools.sha256.* digest re-anchored to the
+          release's own SHA256SUMS by tools/reanchor.rb (the write is
+          re-verified 0-drift before commit)."
+          git push -u origin "$branch"
+          {
+            echo "The tebako $TAG pin roll, automated (tamatebako/tebako#991)."
+            echo
+            echo '```'
+            cat ../drift.txt
+            echo '```'
+          } > ../pr-body.md
+          gh pr create --repo "${{ matrix.repo }}" --title "tools: pin tebako $TAG" --body-file ../pr-body.md --head "$branch"
