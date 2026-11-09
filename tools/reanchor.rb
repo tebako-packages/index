@@ -185,18 +185,22 @@ def reanchor(text, version, sums)
     elsif current&.match?(/\A[0-9a-f]{64}\z/)
       kind =
         if path.include?("wrapper_sha256") then :launcher
-        # The flat tools block (tools.sha256.<platform>) pins the tfs CLI
-        # asset — the documented convention (tools/lib/common.sh's
-        # download_tfs fetches tfs-<version>-<platform>). It must classify
-        # BEFORE the generic `tebako` arm and the nested-shape arms: the
-        # completeness guard owns this family, so an unclassified row is a
-        # hard failure, not a skip (the pin-roll debut died here on
-        # tebako-packages/hello — "no pin kind resolved it").
-        elsif path[0, 2] == %w[tools sha256] then :tfs
+        # The kind-bearing nested shapes win FIRST: `tools.sha256.tebako.*`
+        # is the tebako CLI, not the tfs one — the flat arm is only the
+        # fallback for a tools block with no kind segment (the v2.8.74
+        # roll wrote tfs digests into xml2rfc's tebako pins when the flat
+        # arm ran first — the fetch then correctly failed verification).
         elsif path.include?("sha256") && path.include?("tfs") then :tfs
         elsif path.include?("sha256") && path.include?("link-unit") then :link_unit
         elsif path.include?("sha256") && path.include?("tebako-shim") then :shim
         elsif path.include?("sha256") && path.include?("tebako") then :cli
+        # The flat tools block (tools.sha256.<platform>) pins the tfs CLI
+        # asset — the documented convention (tools/lib/common.sh's
+        # download_tfs fetches tfs-<version>-<platform>). The completeness
+        # guard owns this family, so an unclassified row is a hard
+        # failure, not a skip (the pin-roll debut died here on
+        # tebako-packages/hello — "no pin kind resolved it").
+        elsif path[0, 2] == %w[tools sha256] then :tfs
         end
       next if kind.nil?
 
