@@ -54,14 +54,23 @@ def die(message)
   exit 2
 end
 
-def fetch(url, redirects: 5)
+def fetch(url, redirects: 5, retries: 8)
   uri = URI(url)
   die "too many redirects for #{url}" if redirects.zero?
   res = Net::HTTP.get_response(uri)
   case res
   when Net::HTTPSuccess then res.body
-  when Net::HTTPRedirection then fetch(res["location"], redirects: redirects - 1)
-  else die "#{url} answered #{res.code}"
+  when Net::HTTPRedirection then fetch(res["location"], redirects: redirects - 1, retries: retries)
+  else
+    # A 5xx is the host's transient class (the 2026-11-09 incident 504'd
+    # every release-asset GET for ~an hour): back off and retry. A 4xx is
+    # the request's fault — named immediately, never retried.
+    if res.code.to_i >= 500 && retries.positive?
+      warn "reanchor: #{url} answered #{res.code} — retrying (#{retries} left)"
+      sleep(2**(8 - retries))
+      return fetch(url, redirects: redirects, retries: retries - 1)
+    end
+    die "#{url} answered #{res.code}"
   end
 end
 
