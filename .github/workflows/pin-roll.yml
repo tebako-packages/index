@@ -98,6 +98,11 @@ jobs:
           cd work
           git config user.name "tamatebako-ci"
           git config user.email "tebako@ribose.com"
+          # gh repo clone does NOT leave git a credential for the push
+          # (the v2.8.74 debut died here: "could not read Username for
+          # 'https://github.com'", exit 128) — register gh as the
+          # credential helper so the push rides the same PAT.
+          gh auth setup-git
 
       - name: Re-anchor against ${{ needs.resolve.outputs.tag }}
         id: roll
