@@ -5,6 +5,7 @@
 # tebako release, without touching anything else in the file.
 #
 #   ruby reanchor.rb --tebakofile Tebakofile --release v2.8.57 [--check]
+#   ruby reanchor.rb --contract contract.yml --release v2.8.57 [--check]
 #
 # What it anchors (every value is READ FROM THE RELEASE, never assumed):
 #
@@ -21,6 +22,18 @@
 #                                        which the recipe declares)
 #   <arm>.wrapper_tebako              -> "<ver>" (every arm, nested flavors included)
 #   <arm>.wrapper_sha256.<platform>   -> SHA256SUMS' `tebako-runtime-launcher-<ver>-<platform>` row
+#
+# Contract mode (--contract) covers the OTHER pin shape — the runtime
+# factories' contract.yml (tebako-runtime-ruby, tebako-runtime-python),
+# which carries no Tebakofile. Exactly one key is anchored:
+#
+#   link_unit_release                 -> "v<ver>", and only when the release
+#                                        provably serves at least one
+#                                        link-unit asset (a pinned release
+#                                        whose units never published would
+#                                        silently flip every leg to a
+#                                        source build — a miss is never an
+#                                        error THERE, so it must be one HERE)
 #
 # The file is edited LINE-WISE: only the quoted values on the lines whose
 # path resolves to one of those keys change. Comments, ordering, spacing
@@ -72,6 +85,47 @@ def fetch(url, redirects: 5, retries: 8)
     end
     die "#{url} answered #{res.code}"
   end
+end
+
+# A 1-byte probe: does the release actually SERVE this asset? The link-unit
+# guard runs this instead of trusting the release object, because a factory
+# pinned to a unit-less release does not fail — it silently source-builds.
+# 200/206 = served; 404 = absent; redirects followed (the download host is
+# a redirect chain); 5xx retried like fetch's.
+def asset_served?(url, redirects: 5, retries: 3)
+  uri = URI(url)
+  die "too many redirects probing #{url}" if redirects.zero?
+  res = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+    http.get(uri.request_uri.empty? ? "/" : uri.request_uri, { "range" => "bytes=0-0" })
+  end
+  case res
+  when Net::HTTPSuccess, Net::HTTPPartialContent then true
+  when Net::HTTPRedirection then asset_served?(res["location"], redirects: redirects - 1, retries: retries)
+  when Net::HTTPNotFound then false
+  else
+    if res.code.to_i >= 500 && retries.positive?
+      warn "reanchor: probe #{url} answered #{res.code} — retrying (#{retries} left)"
+      sleep(2**(3 - retries))
+      return asset_served?(url, redirects: redirects, retries: retries - 1)
+    end
+    die "probe #{url} answered #{res.code}"
+  end
+end
+
+# The contract-mode guard: the release must serve at least one link-unit
+# asset on the canonical platform set. The full set is probed because no
+# single platform is guaranteed ("a platform with no published unit misses
+# the pin" is the factories' documented tolerance); zero across the set is
+# the failure — the pin would buy nothing and hide a dead link-unit leg.
+def link_unit_served!(version)
+  platforms = %w[
+    linux-gnu-x86_64 linux-gnu-arm64 linux-musl-x86_64 linux-musl-arm64
+    macos-x86_64 macos-arm64 windows-x86_64
+  ]
+  served = platforms.any? do |platform|
+    asset_served?("#{BASE}/v#{version}/#{asset_name(:link_unit, version, platform)}")
+  end
+  die "v#{version} serves no link-unit asset on any canonical platform — refusing to pin a unit-less release" unless served
 end
 
 # The release monolith: one `digest  name` line per asset it covers.
@@ -170,13 +224,24 @@ def quoted(value)
   value
 end
 
-def reanchor(text, version, sums)
+def reanchor(text, version, sums, contract: false)
   anchors = []
   scan(text).each do |index, path, value, _line|
     next if path.nil?
 
     leaf = path.last
     current = quoted(value)
+
+    if contract
+      # Contract mode anchors exactly one key. The value must already be a
+      # quoted release tag — anything else means the file is not the shape
+      # this mode owns (named, never guessed).
+      next unless path == ["link_unit_release"]
+
+      die "link_unit_release is not a quoted v<ver> tag: #{value.inspect}" unless current&.match?(/\Av\d+\.\d+\.\d+\z/)
+      anchors << Anchor.new(index, path, :release, nil, current, "v#{version}")
+      next
+    end
 
     if path == %w[tools release]
       anchors << Anchor.new(index, path, :release, nil, current, "v#{version}")
@@ -237,6 +302,15 @@ def reanchor(text, version, sums)
   anchors
 end
 
+# Contract mode's existence requirement: the file must actually carry the
+# key this mode owns, or the roll would report "in sync (0 pins)" on a file
+# it never touched.
+def require_contract_anchor!(anchors, path)
+  return unless anchors.empty?
+
+  die "#{path} carries no link_unit_release key — not the contract shape this mode owns"
+end
+
 def rewrite(text, anchors)
   lines = text.lines
   anchors.each do |anchor|
@@ -257,21 +331,33 @@ end
 
 options = { check: false, keep: [] }
 OptionParser.new do |opts|
-  opts.banner = "usage: reanchor.rb --tebakofile <path> --release <vX.Y.Z> [--check]"
+  opts.banner = "usage: reanchor.rb --tebakofile <path> | --contract <path> --release <vX.Y.Z> [--check]"
   opts.on("--tebakofile PATH") { |v| options[:tebakofile] = v }
+  opts.on("--contract PATH") { |v| options[:contract] = v }
   opts.on("--release TAG") { |v| options[:release] = v.delete_prefix("v") }
   opts.on("--check") { options[:check] = true }
   opts.on("--keep PREFIX[,PREFIX]") { |v| options[:keep] = v.split(",").map(&:strip) }
 end.parse!
 
-die "--tebakofile is required" if options[:tebakofile].nil?
+die "exactly one of --tebakofile / --contract is required" if [options[:tebakofile], options[:contract]].compact.length != 1
 die "--release is required" if options[:release].nil?
-die "#{options[:tebakofile]} does not exist" unless File.file?(options[:tebakofile])
+
+contract_mode = !options[:contract].nil?
+target = contract_mode ? options[:contract] : options[:tebakofile]
+die "#{target} does not exist" unless File.file?(target)
 
 version = options[:release]
-text = File.read(options[:tebakofile])
-sums = sha256sums(version)
-anchors = reanchor(text, version, sums)
+text = File.read(target)
+# Contract mode anchors a scalar, not digests: no monolith fetch — but the
+# release must provably serve link-unit assets before the pin moves.
+if contract_mode
+  link_unit_served!(version)
+  sums = nil
+else
+  sums = sha256sums(version)
+end
+anchors = reanchor(text, version, sums, contract: contract_mode)
+require_contract_anchor!(anchors, target) if contract_mode
 # A nested arm may deliberately sit on an older line (truffleruby's jvm
 # arm is the live example): --keep <path-prefix> leaves it untouched, and
 # the report names what was kept so the PR says so out loud.
@@ -285,7 +371,7 @@ skipped = anchors.select { |a| a.old.nil? }
 kept.each { |anchor| puts "  kept (--keep): #{anchor.path.join('.')} stays #{anchor.old}" }
 
 if drift.empty?
-  puts "reanchor: #{options[:tebakofile]} is in sync with v#{version} (#{anchors.length} pins)"
+  puts "reanchor: #{target} is in sync with v#{version} (#{anchors.length} pins)"
   exit 0
 end
 
@@ -303,10 +389,10 @@ end
 # (line indexes are stable; each sub touches one line).
 out = rewrite(text, anchors)
 out = rewrite_scalars(out, anchors)
-File.write(options[:tebakofile], out)
+File.write(target, out)
 
 # Verify what we wrote: re-resolve the written file and prove zero drift.
-verify = reanchor(File.read(options[:tebakofile]), version, sums)
+verify = reanchor(File.read(target), version, sums, contract: contract_mode)
 # The verification pass must apply the SAME --keep filter as the write, or
 # a deliberately-kept arm reads as drift the tool itself created.
 verify, = verify.partition do |anchor|

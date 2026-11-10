@@ -11,8 +11,10 @@ name: pin-roll
 # manual run with an explicit tag for repairs.
 #
 # The contract.yml pair (tebako-runtime-ruby, tebako-runtime-python —
-# link_unit_release, not a Tebakofile) is the named follow-up, not a gap
-# hidden here.
+# link_unit_release, not a Tebakofile) rides the same roll through
+# reanchor.rb's --contract mode, with one guard the Tebakofile path does
+# not need: the release must provably serve a link-unit asset before the
+# pin moves (a unit-less pin silently source-builds there, never fails).
 
 on:
   schedule:
@@ -76,6 +78,11 @@ jobs:
           - repo: tamatebako/tebako-runtime-openjdk
           - repo: tamatebako/tebako-runtime-jruby
           - repo: tamatebako/tebako-runtime-truffleruby
+          # the contract.yml pair — link_unit_release, not a Tebakofile
+          - repo: tamatebako/tebako-runtime-ruby
+            shape: contract
+          - repo: tamatebako/tebako-runtime-python
+            shape: contract
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # this repo's tools/reanchor.rb is the roller
@@ -109,16 +116,23 @@ jobs:
         working-directory: work
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
+          SHAPE: ${{ matrix.shape }}
         run: |
           set -euo pipefail
-          if ruby ../tools/reanchor.rb --tebakofile Tebakofile --release "$TAG" --check > ../drift.txt 2>&1; then
+          target=Tebakofile
+          flag=--tebakofile
+          if [ "$SHAPE" = "contract" ]; then
+            target=contract.yml
+            flag=--contract
+          fi
+          if ruby ../tools/reanchor.rb "$flag" "$target" --release "$TAG" --check > ../drift.txt 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             cat ../drift.txt
           else
             rc=$?
             cat ../drift.txt
             [ "$rc" -eq 1 ] || { echo "::error::reanchor failed (exit $rc) — a named failure, not drift"; exit "$rc"; }
-            ruby ../tools/reanchor.rb --tebakofile Tebakofile --release "$TAG" >> ../drift.txt 2>&1
+            ruby ../tools/reanchor.rb "$flag" "$target" --release "$TAG" >> ../drift.txt 2>&1
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -128,24 +142,35 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
           TAG: ${{ needs.resolve.outputs.tag }}
+          SHAPE: ${{ matrix.shape }}
         run: |
           set -euo pipefail
+          target=Tebakofile
+          if [ "$SHAPE" = "contract" ]; then
+            target=contract.yml
+          fi
           branch="chore/tebako-$TAG"
           if gh pr list --repo "${{ matrix.repo }}" --state open --head "$branch" --json number --jq length | grep -qx 1; then
             echo "a $branch PR is already open on ${{ matrix.repo }} — nothing to do"
             exit 0
           fi
           git checkout -b "$branch"
-          git add Tebakofile
+          git add "$target"
           git commit -m "tools: pin tebako $TAG
 
           The automated pin roll (tebako-packages/index's pin-roll
-          workflow): every tools.sha256.* digest re-anchored to the
-          release's own SHA256SUMS by tools/reanchor.rb (the write is
-          re-verified 0-drift before commit)."
+          workflow): re-anchored to the release's own published shape by
+          tools/reanchor.rb (the write is re-verified 0-drift before
+          commit)."
           git push -u origin "$branch"
           {
             echo "The tebako $TAG pin roll, automated (tamatebako/tebako#991)."
+            echo
+            if [ "$SHAPE" = "contract" ]; then
+              echo "contract.yml's \`link_unit_release\` re-anchored to $TAG (reanchor.rb --contract; the release was first probed to serve a link-unit asset — a unit-less pin would silently source-build there)."
+            else
+              echo "Every tools.sha256.* digest re-anchored to the release's own SHA256SUMS (reanchor.rb --tebakofile)."
+            fi
             echo
             echo '```'
             cat ../drift.txt
