@@ -54,7 +54,7 @@ jobs:
           esac
           # The release must actually serve SHA256SUMS — a draft or a
           # mid-flight release is not a roll target.
-          gh release view "$tag" --repo tamatebako/tebako --json assets --jq '.assets[].name' | grep -qx SHA256SUMS
+          gh release view "$tag" --repo tamatebako/tebako --json assets --jq '.assets[].name' | grep -x SHA256SUMS >/dev/null
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "rolling to $tag"
 
@@ -150,7 +150,7 @@ jobs:
             target=contract.yml
           fi
           branch="chore/tebako-$TAG"
-          if gh pr list --repo "${{ matrix.repo }}" --state open --head "$branch" --json number --jq length | grep -qx 1; then
+          if gh pr list --repo "${{ matrix.repo }}" --state open --head "$branch" --json number --jq length | grep -x 1 >/dev/null; then
             echo "a $branch PR is already open on ${{ matrix.repo }} — nothing to do"
             exit 0
           fi
