@@ -7,13 +7,20 @@ package, each with its own release line).
 ## For users
 
 ```console
-$ tebako add-registry tfs:github:tebako-packages/index
-$ tebako install inkscape@1.3.2
+$ tebako setup            # seeds the official aggregate registry (one time)
+$ tebako install inkscape
 ```
 
-One explicit `add-registry` exposes the whole catalog. Payloads install
-from their own feedstock's releases (verified, cached machine-wide,
-shims registered).
+`tebako setup` seeds the **aggregate registry**
+(tebako-packages/registry) — the one document that carries every
+published payload row. Payloads install from their own feedstock's
+releases (verified, cached machine-wide, shims registered).
+
+This repo's `tpkg-registry.yaml` is the **catalog of the feedstock
+registries** (registry-of-registries) — the maintainer view of what
+feeds the aggregate. Note: the CLI does not chase `packages:` entries
+yet (adding this repo with `add-registry` registers zero payload rows —
+resolution goes through the aggregate).
 
 ## For maintainers
 
