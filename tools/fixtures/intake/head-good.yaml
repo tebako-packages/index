@@ -1,0 +1,7 @@
+schema_version: 1
+packages:
+  - name: fixture-tool
+    kind: toolkit
+    summary: Hermetic intake fixture (good)
+    registry: file://__ROOT__/good-feedstock/tpkg-registry.yaml
+    key_url: file://__ROOT__/key.asc

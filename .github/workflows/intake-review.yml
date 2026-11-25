@@ -1,0 +1,134 @@
+name: intake-review
+# The community feedstock lane (tebako-packages/index#23; docs/community-feedstock.md).
+#
+# A community submission is a PR that adds (or re-points) a packages: row
+# in tpkg-registry.yaml. The review job runs tools/intake_review.rb over
+# base..head and posts the verdict as a PR comment — REPORT-ONLY: this
+# lane never auto-merges; a human maintainer merges (docs/governance.md).
+#
+# pull_request_target, because community submissions arrive from forks and
+# the verdict comment needs a write token. The safety contract this event
+# demands is kept by construction: the TOOL runs from the BASE checkout
+# (trusted), and the PR's head is checked out only to READ
+# tpkg-registry.yaml as data — no code from a submission is ever executed.
+# The scope gate below also fails the review when a PR touches anything
+# beyond the catalog, so a submission cannot smuggle a tool change into
+# its own review.
+#
+# The selftest job rides the hermetic fixtures (tools/fixtures/intake,
+# file:// only) whenever the tool itself changes — the
+# test-probe-registry-row.yml idiom.
+on:
+  pull_request_target:
+    paths: ["tpkg-registry.yaml"]
+  pull_request:
+    paths:
+      - "tools/intake_review.rb"
+      - "tools/fixtures/intake/**"
+      - ".github/workflows/intake-review.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/intake_review.rb"
+      - "tools/fixtures/intake/**"
+      - ".github/workflows/intake-review.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: intake-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: review the submission
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      # The trusted side: the review tool and the base catalog come from
+      # the PR's BASE ref — never from the submission.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      # The submission, checked out as DATA: only tpkg-registry.yaml is
+      # read; nothing in head/ is executed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+
+      - name: Scope gate — the lane admits catalog rows only
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          changed="$(gh pr diff "$PR" --name-only | sort | tr '\n' ' ' | sed 's/ *$//')"
+          echo "changed files: $changed"
+          if [ "$changed" != "tpkg-registry.yaml" ]; then
+            {
+              echo "# Intake review — verdict: RED"
+              echo
+              echo "- ✗ **ScopeViolation** — this lane reviews submissions that change"
+              echo "  \`tpkg-registry.yaml\` and nothing else; this PR changes:"
+              gh pr diff "$PR" --name-only | sed 's/^/  - /'
+              echo
+              echo "Tooling or doc changes ride ordinary PRs; a submission never"
+              echo "carries its own review machinery."
+            } > "$RUNNER_TEMP/verdict.md"
+            echo "scope_red=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "scope_red=0" >> "$GITHUB_OUTPUT"
+          fi
+        id: scope
+
+      - name: Run the intake review
+        if: steps.scope.outputs.scope_red == '0'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          ruby tools/intake_review.rb \
+            --base tpkg-registry.yaml \
+            --head head/tpkg-registry.yaml \
+            --report "$RUNNER_TEMP/verdict.md"
+          rc=$?
+          set -e
+          echo "review_rc=$rc" >> "$GITHUB_OUTPUT"
+        id: review
+
+      - name: Post the verdict (report-only — a human merges)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          {
+            echo
+            echo "---"
+            echo "_run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} · docs: [community-feedstock](https://github.com/${{ github.repository }}/blob/${{ github.event.pull_request.base.ref }}/docs/community-feedstock.md) · [governance](https://github.com/${{ github.repository }}/blob/${{ github.event.pull_request.base.ref }}/docs/governance.md)_"
+          } >> "$RUNNER_TEMP/verdict.md"
+          gh pr comment "$PR" --body-file "$RUNNER_TEMP/verdict.md"
+
+      - name: Verdict drives the check
+        if: always()
+        run: |
+          rc="${{ steps.review.outputs.review_rc }}"
+          scope_red="${{ steps.scope.outputs.scope_red }}"
+          [ "$scope_red" = "1" ] && exit 1
+          exit "${rc:-1}"
+
+  selftest:
+    name: fixture truth table (file://, hermetic)
+    if: github.event_name != 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the intake fixtures
+        run: bash tools/fixtures/intake/selftest.sh
