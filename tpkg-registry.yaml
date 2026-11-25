@@ -19,3 +19,7 @@ packages:
     kind: toolkit
     summary: GNU hello — template prover payload for tebako-packages
     registry: tfs:github:tebako-packages/hello
+  - name: hello-ruby
+    kind: app
+    summary: Ruby hello (runtime-required payload) — synthetic community-lane submission (evidence for #23)
+    registry: tfs:github:tebako-packages/hello-runtimes
