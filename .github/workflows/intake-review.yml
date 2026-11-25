@@ -6,26 +6,40 @@ name: intake-review
 # base..head and posts the verdict as a PR comment — REPORT-ONLY: this
 # lane never auto-merges; a human maintainer merges (docs/governance.md).
 #
-# pull_request_target, because community submissions arrive from forks and
-# the verdict comment needs a write token. The safety contract this event
-# demands is kept by construction: the TOOL runs from the BASE checkout
-# (trusted), and the PR's head is checked out only to READ
-# tpkg-registry.yaml as data — no code from a submission is ever executed.
-# The scope gate below also fails the review when a PR touches anything
-# beyond the catalog, so a submission cannot smuggle a tool change into
-# its own review.
+# Two triggers, one job, exactly one run per PR:
+#
+#   pull_request         — same-repo submissions. Runs the workflow from
+#                          the PR's own tree (so a not-yet-merged lane
+#                          reviews submissions against itself); the token
+#                          carries the declared write permissions.
+#   pull_request_target  — FORK submissions only (the job's if: gates).
+#                          Since 2025-12-08 GitHub always sources this
+#                          event's workflow from the DEFAULT branch — the
+#                          trusted copy — and grants the write token the
+#                          verdict comment needs. The safety contract the
+#                          event demands is kept by construction: the TOOL
+#                          runs from the BASE checkout and the PR's head
+#                          is checked out only to READ tpkg-registry.yaml
+#                          as data — no submission code is ever executed.
+#
+# In both events the scope gate fails the review when a PR touches
+# anything beyond the catalog, so a submission never carries its own
+# review machinery. A PR that leaves the catalog untouched (a tooling
+# change riding the paths below) is skipped silently — no verdict, no
+# comment.
 #
 # The selftest job rides the hermetic fixtures (tools/fixtures/intake,
 # file:// only) whenever the tool itself changes — the
 # test-probe-registry-row.yml idiom.
 on:
-  pull_request_target:
-    paths: ["tpkg-registry.yaml"]
   pull_request:
     paths:
+      - "tpkg-registry.yaml"
       - "tools/intake_review.rb"
       - "tools/fixtures/intake/**"
       - ".github/workflows/intake-review.yml"
+  pull_request_target:
+    paths: ["tpkg-registry.yaml"]
   push:
     branches: [main]
     paths:
@@ -45,7 +59,11 @@ concurrency:
 jobs:
   review:
     name: review the submission
-    if: github.event_name == 'pull_request_target'
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'pull_request_target' &&
+       github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-24.04
     steps:
       # The trusted side: the review tool and the base catalog come from
@@ -63,32 +81,35 @@ jobs:
           path: head
 
       - name: Scope gate — the lane admits catalog rows only
+        id: scope
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          changed="$(gh pr diff "$PR" --name-only | sort | tr '\n' ' ' | sed 's/ *$//')"
-          echo "changed files: $changed"
-          if [ "$changed" != "tpkg-registry.yaml" ]; then
+          changed="$(gh pr diff "$PR" --name-only | sort)"
+          echo "changed files:"; echo "$changed"
+          if ! printf '%s\n' "$changed" | grep -qx "tpkg-registry.yaml"; then
+            # The catalog is untouched (a tooling PR riding the trigger
+            # paths) — no submission, no verdict, no comment.
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          elif [ "$(printf '%s\n' "$changed" | wc -l | tr -d ' ')" != "1" ]; then
             {
               echo "# Intake review — verdict: RED"
               echo
               echo "- ✗ **ScopeViolation** — this lane reviews submissions that change"
               echo "  \`tpkg-registry.yaml\` and nothing else; this PR changes:"
-              gh pr diff "$PR" --name-only | sed 's/^/  - /'
+              printf '%s\n' "$changed" | sed 's/^/  - /'
               echo
               echo "Tooling or doc changes ride ordinary PRs; a submission never"
               echo "carries its own review machinery."
             } > "$RUNNER_TEMP/verdict.md"
-            echo "scope_red=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "scope_red=0" >> "$GITHUB_OUTPUT"
+            echo "red=1" >> "$GITHUB_OUTPUT"
           fi
-        id: scope
 
       - name: Run the intake review
-        if: steps.scope.outputs.scope_red == '0'
+        if: steps.scope.outputs.skip != '1' && steps.scope.outputs.red != '1'
+        id: review
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -99,11 +120,10 @@ jobs:
             --report "$RUNNER_TEMP/verdict.md"
           rc=$?
           set -e
-          echo "review_rc=$rc" >> "$GITHUB_OUTPUT"
-        id: review
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
 
       - name: Post the verdict (report-only — a human merges)
-        if: always()
+        if: always() && steps.scope.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
@@ -117,12 +137,10 @@ jobs:
           gh pr comment "$PR" --body-file "$RUNNER_TEMP/verdict.md"
 
       - name: Verdict drives the check
-        if: always()
+        if: always() && steps.scope.outputs.skip != '1'
         run: |
-          rc="${{ steps.review.outputs.review_rc }}"
-          scope_red="${{ steps.scope.outputs.scope_red }}"
-          [ "$scope_red" = "1" ] && exit 1
-          exit "${rc:-1}"
+          [ "${{ steps.scope.outputs.red }}" = "1" ] && exit 1
+          exit "${{ steps.review.outputs.rc || '1' }}"
 
   selftest:
     name: fixture truth table (file://, hermetic)
