@@ -1,0 +1,11 @@
+schema_version: 1
+# The live leg (selftest.sh leg 4): a real submission-shaped catalog row
+# pointing at the smallest signed org feedstock. Exercises the network
+# path the file:// legs cannot — redirect-following, the presigned-URL
+# auth discipline (a GITHUB_TOKEN Bearer must NOT ride the
+# release-asset redirect targets), and the tamatebako root key fetch.
+packages:
+  - name: hello
+    kind: toolkit
+    summary: GNU hello — the live fixture leg's real, signed payload
+    registry: tfs:github:tebako-packages/hello

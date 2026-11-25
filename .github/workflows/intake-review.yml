@@ -149,4 +149,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Run the intake fixtures
+        env:
+          # the live leg (leg 4) exercises the token-bearing request
+          # path — the presigned-URL auth discipline is what's under test
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash tools/fixtures/intake/selftest.sh

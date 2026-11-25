@@ -75,6 +75,21 @@ ruby "$REVIEW" --base "$WORK/base.yaml" --head "$WORK/base.yaml" \
   --allow-file-refs > /dev/null 2>&1 || rc=$?
 if [ "$rc" -eq 1 ]; then echo "ok: red"; else echo "FAIL: expected exit 1 (got $rc)"; fail=1; fi
 
+echo "== leg 4: the live leg — tebako-packages/hello over the network (GREEN expected)"
+# The file:// legs cannot exercise the network path: redirect-following,
+# the presigned-URL auth discipline (a GITHUB_TOKEN Bearer must NOT ride
+# the release-asset redirect targets — the 2026-11-25 HTTP 401), and the
+# root key fetch. When GITHUB_TOKEN is set (CI), the header path is the
+# one under test; without it (a workstation), the anonymous path.
+rc=0
+ruby "$REVIEW" --base "$WORK/base.yaml" --head "$HERE/head-live-hello.yaml" \
+  --report "$WORK/verdict-live.md" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q "verdict: GREEN" "$WORK/verdict-live.md"; then
+  echo "ok: live GREEN"
+else
+  echo "FAIL: the live leg went red (exit $rc)"; cat "$WORK/verdict-live.md"; fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "selftest: all legs green"
 else
