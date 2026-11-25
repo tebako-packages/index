@@ -19,3 +19,7 @@ packages:
     kind: toolkit
     summary: GNU hello — template prover payload for tebako-packages
     registry: tfs:github:tebako-packages/hello
+  - name: hello-ruby
+    kind: app
+    summary: DOCTORED synthetic submission — the registry pins a wrong sha256 (intake red evidence for #23)
+    registry: tfs:github:ronaldtse/tebako-intake-fixture
