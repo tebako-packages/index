@@ -1,0 +1,19 @@
+---
+schema_version: 1
+payloads:
+- name: fixture-tool
+  kind: toolkit
+  versions:
+  - version: '0.1.0'
+    platforms:
+      aarch64-macos:
+        artifact: fixture-tool-0.1.0.tfs
+        sha256: '07cd89911fbe89b81e753244e21c18500462909bb3358a59fe52f8ae98f7787e'
+    release:
+      ref: file://__ROOT__/good-feedstock/release-0.1.0
+    signature:
+      keyid: __KEYID__
+      asc: fixture-tool-0.1.0.tfs.asc
+    entrypoints:
+    - fixture-tool
+  default: '0.1.0'

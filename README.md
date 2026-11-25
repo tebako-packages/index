@@ -45,6 +45,19 @@ Landing a new package: copy the template, fill the recipe, open the
 feedstock, then add its registry entry to `tpkg-registry.yaml` here.
 See `docs/conventions.md`.
 
+## For community publishers
+
+The catalog is open to third-party feedstocks — the **community
+feedstock lane**. Open a feedstock from `templates/feedstock/` in your
+own org (signed with your own key) or propose one for adoption into
+`tebako-packages`, then open a PR here adding your `packages:` row. The
+`intake-review` workflow gates the submission — schema, reachability,
+sha256 pins, signatures, monotonicity — and posts a report-only verdict;
+a human maintainer merges. The rules: `docs/community-feedstock.md`
+(the provisioning checklist) and `docs/governance.md` (review
+expectation, abuse reports, the `status: withdrawn` takedown mechanism
+and SLA, conduct).
+
 ## Shared actions
 
 - **`.github/actions/probe-registry-row`** — the "is the row published
