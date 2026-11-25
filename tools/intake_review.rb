@@ -139,7 +139,12 @@ class TransientFetch < StandardError; end
 
 def github_auth(req, uri)
   token = ENV["GITHUB_TOKEN"]
-  if token && !token.empty? && uri.host.end_with?("github.com", "githubusercontent.com")
+  # Only api.github.com (rate budget) and raw.githubusercontent.com (the
+  # registry documents) get the Bearer. The commons indexes PUBLIC
+  # releases, and presigned artifact URLs (objects/release-assets.
+  # githubusercontent.com) REJECT any added Authorization — an extra
+  # header invalidates the AWS signature (HTTP 401, observed in CI).
+  if token && !token.empty? && %w[api.github.com raw.githubusercontent.com].include?(uri.host)
     req["Authorization"] = "Bearer #{token}"
   end
 end
