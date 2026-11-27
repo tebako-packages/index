@@ -1,0 +1,356 @@
+name: vuln-scan
+# The mechanical vulnerability process (tamatebako/tebako#1123): per
+# feedstock, weekly, scan the SBOM of record for known vulnerabilities and
+# keep ONE rolling findings issue per feedstock repo current. The process
+# doc (triage SLA, the override mechanism, the escalation path) is
+# docs/vulnerability-process.md in tamatebako/tebako.
+#
+# The SBOM of record per feedstock payload:
+#   lane "published" — the feedstock's latest release carries *.cdx.json
+#     assets (the publish pipeline's own SBOMs, tebako#1120's downstream);
+#     they are scanned as published.
+#   lane "generate" — no published SBOMs yet: the release's *.tfs payload
+#     legs are downloaded (digest-verified against the release's own
+#     anchors) and `tebako sbom` generates the inventory from the image
+#     (degraded mode while no closure rides the press — loudly flagged in
+#     the document, never claimed complete).
+# The lane is chosen per run from the release's asset list alone; a
+# feedstock upgrades to "published" the day its press ships .cdx.json,
+# with no edit here.
+#
+# Failure grammar (the issue's law): vulnerability CONTENT is data — a
+# non-empty scan files/updates the rolling issue and the leg stays green;
+# an empty scan closes the rolling issue with the clean-run note. A
+# scanner/infra failure (scanner download, digest mismatch, a tebako
+# binary without the sbom verb, a malformed result) fails the leg LOUDLY.
+# No pages either way.
+#
+# Triggers: the weekly cron (fleet convention: off the top of the hour)
+# and a manual run — `feedstock` narrows to one repo (pilot/repair), the
+# `runner` + `tebako_tools_*` inputs are the rehearsal lane for riding a
+# not-yet-released tebako binary (see the acquisition step).
+
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      feedstock:
+        description: "scan only this feedstock (name or owner/name; empty = the whole fleet)"
+        required: false
+        type: string
+      runner:
+        description: "rehearsal: runner label for the scan legs"
+        required: false
+        default: "ubuntu-24.04"
+        type: string
+      tebako_tools_url:
+        description: "rehearsal: direct URL of the tebako CLI binary (requires tebako_tools_sha256)"
+        required: false
+        type: string
+      tebako_tools_sha256:
+        description: "rehearsal: the override binary's sha256 (64 hex)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vuln-scan
+  cancel-in-progress: false
+
+env:
+  OSV_SCANNER_VERSION: "2.7.1"
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.fleet.outputs.matrix }}
+    steps:
+      - id: fleet
+        env:
+          ONLY: ${{ inputs.feedstock }}
+        run: |
+          set -euo pipefail
+          # The scan fleet — every tebako-packages feedstock that releases
+          # .tfs payloads. New feedstocks join here when their first
+          # release lands (the index#24 roll-out checklist).
+          fleet='[
+            "tebako-packages/metanorma",
+            "tebako-packages/hello",
+            "tebako-packages/fontist",
+            "tebako-packages/inkscape",
+            "tebako-packages/xml2rfc",
+            "tebako-packages/pydata",
+            "tebako-packages/toolkits",
+            "tebako-packages/tebako-crypto",
+            "tebako-packages/hello-runtimes"
+          ]'
+          if [ -n "$ONLY" ]; then
+            case "$ONLY" in */*) ;; *) ONLY="tebako-packages/$ONLY";; esac
+            fleet="$(jq -c --arg only "$ONLY" '[.[] | select(. == $only)]' <<<"$fleet")"
+            [ "$(jq length <<<"$fleet")" -gt 0 ] || {
+              echo "::error::unknown feedstock '$ONLY' — not in the vuln-scan fleet list"
+              exit 1
+            }
+          fi
+          echo "matrix=$(jq -c '{repo: .}' <<<"$fleet")" >> "$GITHUB_OUTPUT"
+
+  scan:
+    needs: plan
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # this repo's tools/vulnscan_report.py + vulnscan/osv-scanner.toml
+
+      - name: Guard the token
+        run: |
+          if [ -z "${TEBAKO_CI_PAT_TOKEN:-}" ]; then
+            echo "::error::TEBAKO_CI_PAT_TOKEN is not visible to this workflow — the scan files the rolling issues on the feedstock repos and needs it (org secret)"
+            exit 1
+          fi
+        env:
+          TEBAKO_CI_PAT_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+
+      - name: Resolve the feedstock's latest release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          gh release view --repo "$REPO" --json tagName,assets > release.json
+          tag="$(jq -r .tagName release.json)"
+          [ -n "$tag" ] && [ "$tag" != "null" ] || {
+            echo "::error::$REPO serves no release — nothing to scan"
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "scanning $REPO @ $tag"
+
+      - name: Fetch the SBOM of record
+        id: sbom
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+          REPO: ${{ matrix.repo }}
+          TAG: ${{ steps.release.outputs.tag }}
+          OVERRIDE_URL: ${{ inputs.tebako_tools_url }}
+          OVERRIDE_SHA256: ${{ inputs.tebako_tools_sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          # Asset lists ride unquoted expansion — release asset names
+          # never carry spaces (*.tfs / *.cdx.json), and mapfile is not
+          # portable to the macOS runners' bash 3.2.
+          cdx="$(jq -r '.assets[].name | select(endswith(".cdx.json"))' release.json)"
+          if [ -n "$cdx" ]; then
+            # Lane "published": the press shipped its own SBOMs — scan
+            # those bytes, verified against the release's own anchors
+            # (the SBOMs ride SHA256SUMS rows, never per-asset sidecars —
+            # spec 13 §5a). A release with no sums at all is a loud
+            # warning, recorded; unverifiable rows are a named failure.
+            lane=published
+            if jq -e '.assets[].name | select(. == "SHA256SUMS")' release.json >/dev/null; then
+              gh release download "$TAG" --repo "$REPO" -p SHA256SUMS --clobber
+            else
+              echo "::warning::$REPO @ $TAG ships SBOMs but no SHA256SUMS — scanning unverified bytes"
+            fi
+            for a in $cdx; do
+              gh release download "$TAG" --repo "$REPO" -p "$a" -D sbom --clobber
+              if [ -f SHA256SUMS ]; then
+                grep "  $a\$" SHA256SUMS > sbom/row.sha256 || {
+                  echo "::error::$a has no SHA256SUMS row on $REPO @ $TAG — the anchor is missing, not optional"
+                  exit 1
+                }
+                (cd sbom && shasum -a 256 -c row.sha256)
+              fi
+            done
+          else
+            # Lane "generate": no published SBOMs yet — generate per
+            # payload leg with the sbom verb (tebako#1120).
+            lane=generate
+            tfs="$(jq -r '.assets[].name | select(endswith(".tfs"))' release.json)"
+            [ -n "$tfs" ] || {
+              echo "::error::$REPO @ $TAG carries neither .cdx.json nor .tfs assets — no SBOM of record exists"
+              exit 1
+            }
+            mkdir -p legs tools-bin
+
+            # --- acquire the tebako CLI (release floor: the sbom verb) ---
+            if [ -n "$OVERRIDE_URL" ]; then
+              # The rehearsal lane: an explicitly pinned binary (both
+              # inputs together, never one alone).
+              [ -n "$OVERRIDE_SHA256" ] || {
+                echo "::error::tebako_tools_url requires tebako_tools_sha256"
+                exit 1
+              }
+              curl -fsSL --retry 3 -o tools-bin/tebako "$OVERRIDE_URL"
+              echo "$OVERRIDE_SHA256  tools-bin/tebako" | shasum -a 256 -c -
+            else
+              case "$(uname -s)-$(uname -m)" in
+                Linux-x86_64)  plat=linux-gnu-x86_64;;
+                Linux-aarch64) plat=linux-gnu-arm64;;
+                Darwin-arm64)  plat=macos-arm64;;
+                Darwin-x86_64) plat=macos-x86_64;;
+                *) echo "::error::no tebako CLI asset grammar for host $(uname -s)-$(uname -m)"; exit 1;;
+              esac
+              ttag="$(gh release view --repo tamatebako/tebako --json tagName --jq .tagName)"
+              asset="tebako-${ttag#v}-$plat"
+              gh release download "$ttag" --repo tamatebako/tebako -p "$asset" -p "$asset.sha256" -D tools-bin --clobber
+              (cd tools-bin && shasum -a 256 -c "$asset.sha256")
+              mv "tools-bin/$asset" tools-bin/tebako
+            fi
+            chmod +x tools-bin/tebako
+            # The generate lane's floor: the binary must serve the sbom
+            # verb (shipped after v2.8.85, tebako#1120). A release that
+            # predates it is a named failure, not a skipped scan.
+            probe="$(tools-bin/tebako sbom 2>&1 || true)"
+            grep -q "usage: tebako sbom" <<<"$probe" || {
+              echo "::error::the acquired tebako binary does not serve the sbom verb (needs the first release carrying tebako#1120; v2.8.85 and earlier predate it)"
+              exit 1
+            }
+
+            # --- per leg: download, verify against the release's own
+            # anchors (sidecar, else the SHA256SUMS row), generate ---
+            sums=""
+            if jq -e '.assets[].name | select(. == "SHA256SUMS")' release.json >/dev/null; then
+              gh release download "$TAG" --repo "$REPO" -p SHA256SUMS --clobber
+              sums=SHA256SUMS
+            fi
+            for a in $tfs; do
+              gh release download "$TAG" --repo "$REPO" -p "$a" -D legs --clobber
+              if jq -e --arg a "$a" '.assets[].name | select(. == ($a + ".sha256"))' release.json >/dev/null; then
+                gh release download "$TAG" --repo "$REPO" -p "$a.sha256" -D legs --clobber
+                (cd legs && shasum -a 256 -c "$a.sha256")
+              elif [ -n "$sums" ] && grep -q "  $a\$" "$sums"; then
+                grep "  $a\$" "$sums" > legs/row.sha256
+                (cd legs && shasum -a 256 -c row.sha256)
+              else
+                echo "::warning::no published digest anchor for $a on $REPO @ $TAG — scanning unverified bytes"
+              fi
+              tools-bin/tebako sbom "legs/$a" --out "sbom/${a%.tfs}.cdx.json"
+            done
+          fi
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          ls -la sbom/
+
+      - name: Install osv-scanner (pinned ${{ env.OSV_SCANNER_VERSION }}, checksum-verified)
+        run: |
+          set -euo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)  asset=osv-scanner_linux_amd64;;
+            Linux-aarch64) asset=osv-scanner_linux_arm64;;
+            Darwin-arm64)  asset=osv-scanner_darwin_arm64;;
+            Darwin-x86_64) asset=osv-scanner_darwin_amd64;;
+            *) echo "::error::no osv-scanner asset grammar for host $(uname -s)-$(uname -m)"; exit 1;;
+          esac
+          base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
+          curl -fsSL --retry 3 -o osv-scanner "$base/$asset"
+          curl -fsSL --retry 3 -o osv-sums "$base/osv-scanner_SHA256SUMS"
+          grep " $asset\$" osv-sums | shasum -a 256 -c -
+          chmod +x osv-scanner
+          ./osv-scanner --version
+
+      - name: Assemble the ignore config
+        env:
+          REPO: ${{ matrix.repo }}
+        run: |
+          set -euo pipefail
+          # Grammar law (vulnscan/osv-scanner.toml): [[IgnoredVulns]] rows
+          # only, so this concatenation stays valid TOML. The feedstock's
+          # own osv-scanner.toml (repo root) is its maintainers' override
+          # surface; absent means no feedstock overrides.
+          cp vulnscan/osv-scanner.toml scan-config.toml
+          if feedstock_cfg="$(curl -fsSL --retry 3 "https://raw.githubusercontent.com/$REPO/HEAD/osv-scanner.toml")"; then
+            printf '\n# --- feedstock overrides: %s ---\n%s\n' "$REPO" "$feedstock_cfg" >> scan-config.toml
+            echo "feedstock overrides present: $REPO/osv-scanner.toml"
+          else
+            echo "no feedstock-local overrides"
+          fi
+
+      - name: Scan the SBOMs
+        id: scan
+        run: |
+          set -euo pipefail
+          findings=0
+          for f in sbom/*.cdx.json; do
+            out="${f%.cdx.json}.osv.json"
+            rc=0
+            ./osv-scanner --sbom="$f" --config scan-config.toml --format=json --output-file="$out" || rc=$?
+            case "$rc" in
+              0) ;;
+              1) findings=1 ;;   # vulnerabilities found — data, never a build failure
+              *) echo "::error::osv-scanner failed (exit $rc) on $f — a scanner/infra failure, not vulnerability content"
+                 exit "$rc";;
+            esac
+          done
+          echo "findings=$findings" >> "$GITHUB_OUTPUT"
+
+      - name: Aggregate the findings
+        id: report
+        env:
+          REPO: ${{ matrix.repo }}
+          TAG: ${{ steps.release.outputs.tag }}
+          LANE: ${{ steps.sbom.outputs.lane }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          when="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 tools/vulnscan_report.py sbom report "$REPO" "$TAG" "$LANE" "$RUN_URL" "$when"
+          cat report/issue-body.md
+
+      - name: File the rolling issue
+        env:
+          GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
+          REPO: ${{ matrix.repo }}
+          TAG: ${{ steps.release.outputs.tag }}
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          label="vulnerability-scan"
+          gh label create "$label" --repo "$REPO" --force \
+            --color BFD4F2 \
+            --description "rolling SBOM→CVE findings of the weekly vuln-scan (tamatebako/tebako#1123)"
+          existing="$(gh issue list --repo "$REPO" --label "$label" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ "$FINDINGS" = "1" ]; then
+            new_ids="$(cat report/ids.txt)"
+            old_ids=""
+            if [ -n "$existing" ]; then
+              old_ids="$(gh issue view "$existing" --repo "$REPO" --json body \
+                --jq '.body' | sed -n 's/.*<!-- vulnscan-ids: \([^ ]*\) -->.*/\1/p' | head -1)"
+            fi
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --repo "$REPO" --body-file report/issue-body.md
+              added="$(comm -23 <(tr ',' '\n' <<<"$new_ids" | sort -u) <(tr ',' '\n' <<<"$old_ids" | sort -u) | paste -sd, -)"
+              resolved="$(comm -13 <(tr ',' '\n' <<<"$new_ids" | sort -u) <(tr ',' '\n' <<<"$old_ids" | sort -u) | paste -sd, -)"
+              note=""
+              [ -n "$added" ] && note+="New findings: $added. "
+              [ -n "$resolved" ] && note+="Resolved since the previous run: $resolved. "
+              if [ -n "$note" ]; then
+                gh issue comment "$existing" --repo "$REPO" \
+                  --body "$note Run: $RUN_URL"
+              else
+                echo "finding set unchanged — body refreshed, no comment (the comment log is for deltas)"
+              fi
+            else
+              gh issue create --repo "$REPO" --label "$label" \
+                --title "vulnerability scan findings (rolling)" \
+                --body-file report/issue-body.md
+            fi
+          else
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$REPO" \
+                --body "Clean run: 0 findings across every scanned SBOM leg of $REPO @ $TAG. Run: $RUN_URL — closing until the next hit."
+              gh issue close "$existing" --repo "$REPO"
+            else
+              echo "clean and no rolling issue open — nothing to file"
+            fi
+          fi

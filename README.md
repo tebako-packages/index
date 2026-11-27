@@ -58,6 +58,19 @@ a human maintainer merges. The rules: `docs/community-feedstock.md`
 expectation, abuse reports, the `status: withdrawn` takedown mechanism
 and SLA, conduct).
 
+## Fleet jobs
+
+- **`pin-roll`** — daily: rolls every Tebakofile repo's tools pins to the
+  latest tebako release (bump PRs, byte-verified by `tools/reanchor.rb`).
+- **`vuln-scan`** — weekly (Monday 04:23 UTC): the mechanical
+  vulnerability process (tamatebako/tebako#1123). Scans every feedstock
+  payload's SBOM of record with a pinned osv-scanner and keeps one
+  rolling `vulnerability-scan` issue per feedstock repo current — never a
+  red cron on vulnerability content, always loud on scanner/infra
+  failure. The process doc (triage SLA, the `osv-scanner.toml` override
+  mechanism) is `docs/vulnerability-process.md` in tamatebako/tebako;
+  fleet-global ignores live in `vulnscan/osv-scanner.toml` here.
+
 ## Shared actions
 
 - **`.github/actions/probe-registry-row`** — the "is the row published
