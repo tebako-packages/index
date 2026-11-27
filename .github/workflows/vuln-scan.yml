@@ -295,9 +295,13 @@ jobs:
             *) echo "::error::no osv-scanner asset grammar for host $(uname -s)-$(uname -m)"; exit 1;;
           esac
           base="https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}"
-          curl -fsSL --retry 3 -o osv-scanner "$base/$asset"
+          # The checksum file names the canonical asset — download it under
+          # its own name for shasum -c (a name mismatch reads as
+          # "FAILED open or read", the v1 shape of this step), then rename.
+          curl -fsSL --retry 3 -o "$asset" "$base/$asset"
           curl -fsSL --retry 3 -o osv-sums "$base/osv-scanner_SHA256SUMS"
           grep " $asset\$" osv-sums | shasum -a 256 -c -
+          mv "$asset" osv-scanner
           chmod +x osv-scanner
           ./osv-scanner --version
 
