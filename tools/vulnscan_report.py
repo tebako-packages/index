@@ -20,6 +20,15 @@ MARKER_PREFIX = "<!-- vulnscan-ids:"
 MARKER_SUFFIX = "-->"
 
 
+def sev_score(value):
+    """groups[].max_severity arrives as a score string ("7.5") or "" —
+    anything unparsable sorts as unscored (0), never crashes the report."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def collect(osv_dir: Path):
     """One finding per OSV group, merged across every scanned SBOM leg."""
     findings = {}
@@ -50,14 +59,14 @@ def collect(osv_dir: Path):
                         "max_severity": sev,
                         "packages": {},
                     })
-                    if sev and (not f["max_severity"] or float(sev) > float(f["max_severity"] or 0)):
+                    if sev and sev_score(sev) > sev_score(f["max_severity"]):
                         f["max_severity"] = sev
                     f["aliases"] = sorted(set(f["aliases"]) | set(aliases))
                     hit = f["packages"].setdefault(pname, set())
                     hit.add(leg)
     for f in findings.values():
         f["packages"] = {p: sorted(legs_) for p, legs_ in sorted(f["packages"].items())}
-    ordered = sorted(findings.values(), key=lambda f: (-(float(f["max_severity"] or 0)), f["id"]))
+    ordered = sorted(findings.values(), key=lambda f: (-sev_score(f["max_severity"]), f["id"]))
     return ordered, legs
 
 
