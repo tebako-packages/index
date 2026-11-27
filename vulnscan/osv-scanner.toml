@@ -1,0 +1,18 @@
+# vuln-scan's fleet-global ignore list (tamatebako/tebako#1123).
+#
+# osv-scanner configuration, concatenated at scan time with the scanned
+# feedstock's own osv-scanner.toml (fetched from the feedstock repo root
+# when present). GRAMMAR LAW: [[IgnoredVulns]] tables ONLY — no other
+# top-level TOML keys, so the concatenation of the two files stays valid
+# TOML (a duplicated key would fail osv-scanner's parse — loudly, at scan
+# time, never silently).
+#
+# Fleet-global rows are for false positives that hit EVERY feedstock alike
+# (e.g. a scanner ecosystem-mapping artifact). A per-payload accepted risk
+# belongs in that feedstock's own osv-scanner.toml, with a reason naming
+# the evidence. Every row MUST carry a reason; undated blanket ignores
+# are removed on review.
+#
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-yyyy-zzzz"
+# reason = "why this cannot affect the shipped payload (evidence link)"
