@@ -23,7 +23,11 @@ name: vuln-scan
 # an empty scan closes the rolling issue with the clean-run note. A
 # scanner/infra failure (scanner download, digest mismatch, a tebako
 # binary without the sbom verb, a malformed result) fails the leg LOUDLY.
-# No pages either way.
+# Between the two sits the content gap: a payload the verb refuses (no
+# gemspecs, no closure yet — the named spec 15 §8 refusal) is a recorded
+# ::warning per leg, nothing filed, never red, and never filed as "clean"
+# (nothing was scanned); it resolves when the feedstock's closure/SBOM
+# publish lands. No pages, on any class.
 #
 # Triggers: the weekly cron (fleet convention: off the top of the hour)
 # and a manual run — `feedstock` narrows to one repo (pilot/repair), the
@@ -234,8 +238,33 @@ jobs:
               else
                 echo "::warning::no published digest anchor for $a on $REPO @ $TAG — scanning unverified bytes"
               fi
-              tools-bin/tebako sbom "legs/$a" --out "sbom/${a%.tfs}.cdx.json"
+              gen_log="sbom/${a%.tfs}.gen.log"
+              rc=0
+              tools-bin/tebako sbom "legs/$a" --out "sbom/${a%.tfs}.cdx.json" >"$gen_log" 2>&1 || rc=$?
+              if [ "$rc" -ne 0 ]; then
+                if [ "$rc" -eq 65 ] && grep -q "carries no gem specifications" "$gen_log"; then
+                  # The content gap (spec 15 §8's named refusal): the
+                  # degraded lane has nothing to read in this payload
+                  # until the press ships closures or .cdx.json. Recorded
+                  # loudly per leg, never red — and never filed as a
+                  # "clean" scan: nothing was scanned.
+                  echo "::warning::no SBOM of record for $a — tebako sbom's named refusal: $(tail -1 "$gen_log")"
+                  rm -f "sbom/${a%.tfs}.cdx.json" "$gen_log"
+                else
+                  cat "$gen_log"
+                  echo "::error::tebako sbom failed (exit $rc) on $a — an infra failure, not a content gap"
+                  exit "$rc"
+                fi
+              else
+                tail -1 "$gen_log"
+                rm -f "$gen_log"
+              fi
             done
+            made="$(ls sbom/*.cdx.json 2>/dev/null | wc -l | tr -d ' ')"
+            [ "$made" -gt 0 ] || {
+              echo "::warning::no SBOM of record for ANY leg of $REPO @ $TAG — nothing scanned, nothing filed (the content gap resolves when the feedstock's closure/SBOM publish lands)"
+            }
+            echo "sboms=$made" >> "$GITHUB_OUTPUT"
           fi
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
           ls -la sbom/
@@ -278,6 +307,11 @@ jobs:
         id: scan
         run: |
           set -euo pipefail
+          if ! ls sbom/*.cdx.json >/dev/null 2>&1; then
+            echo "findings=unscanned" >> "$GITHUB_OUTPUT"
+            echo "no SBOMs to scan — every leg rode the no-inventory content gap (see the warnings above); nothing filed"
+            exit 0
+          fi
           findings=0
           for f in sbom/*.cdx.json; do
             out="${f%.cdx.json}.osv.json"
@@ -293,6 +327,7 @@ jobs:
           echo "findings=$findings" >> "$GITHUB_OUTPUT"
 
       - name: Aggregate the findings
+        if: steps.scan.outputs.findings != 'unscanned'
         id: report
         env:
           REPO: ${{ matrix.repo }}
@@ -320,7 +355,8 @@ jobs:
             --description "rolling SBOM→CVE findings of the weekly vuln-scan (tamatebako/tebako#1123)"
           existing="$(gh issue list --repo "$REPO" --label "$label" --state open \
             --json number --jq '.[0].number // empty')"
-          if [ "$FINDINGS" = "1" ]; then
+          case "$FINDINGS" in
+          1)
             new_ids="$(cat report/ids.txt)"
             old_ids=""
             if [ -n "$existing" ]; then
@@ -345,7 +381,8 @@ jobs:
                 --title "vulnerability scan findings (rolling)" \
                 --body-file report/issue-body.md
             fi
-          else
+            ;;
+          0)
             if [ -n "$existing" ]; then
               gh issue comment "$existing" --repo "$REPO" \
                 --body "Clean run: 0 findings across every scanned SBOM leg of $REPO @ $TAG. Run: $RUN_URL — closing until the next hit."
@@ -353,4 +390,11 @@ jobs:
             else
               echo "clean and no rolling issue open — nothing to file"
             fi
-          fi
+            ;;
+          unscanned)
+            # The content gap is never filed as "clean": closing the
+            # rolling issue on zero SCANNED legs would record a verdict
+            # the run never made.
+            echo "nothing scanned (content gap) — the rolling issue is untouched"
+            ;;
+          esac
