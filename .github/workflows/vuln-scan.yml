@@ -74,7 +74,7 @@ env:
   # TEMP rehearsal parameters for the pilot (removed before merge) — the
   # dispatch inputs take precedence when set; these fire the pilot legs on
   # pull_request.
-  PILOT_FEEDSTOCK: "metanorma"
+  PILOT_FEEDSTOCK: "fontist"
   PILOT_RUNNER: "macos-15"  # (runs-on is hardcoded in the temp shape; this rides for the revert record)
   PILOT_TEBAKO_URL: "https://github.com/ronaldtse/tebako/releases/download/rehearsal-vulnscan-20261127/tebako-main-fe5c34eea-macos-arm64"
   PILOT_TEBAKO_SHA256: "5fdd1dc0efa35c1957800de29b357c08c9158317bf24e36690eced0808d32378"
