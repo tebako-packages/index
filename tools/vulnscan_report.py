@@ -38,11 +38,13 @@ def collect(osv_dir: Path):
         sys.exit("vulnscan_report: no *.osv.json files in " + str(osv_dir))
     for path in files:
         doc = json.loads(path.read_text())
+        # The leg name rides the file name (the scan loop writes
+        # <leg>.osv.json per <leg>.cdx.json) — a clean scan emits
+        # "results": [] with no source records at all.
+        leg = path.name.removesuffix(".osv.json")
+        if leg not in legs:
+            legs.append(leg)
         for result in doc.get("results", []):
-            source = Path(result.get("source", {}).get("path", path.name)).name
-            leg = source.removesuffix(".cdx.json")
-            if leg not in legs:
-                legs.append(leg)
             for pkg in result.get("packages", []):
                 pinfo = pkg.get("package", {})
                 pname = "{}@{}".format(pinfo.get("name", "?"), pinfo.get("version", "?"))
