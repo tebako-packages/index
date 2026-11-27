@@ -37,11 +37,6 @@ name: vuln-scan
 on:
   schedule:
     - cron: "23 4 * * 1"
-  # TEMP (the tebako#1123 pilot rehearsal — removed before merge):
-  # workflow_dispatch registers only on the default branch, so the two
-  # pilot legs fire on pull_request on this PR's branch, parameterized by
-  # the PILOT_* env below (empty = inert; production behavior unchanged).
-  pull_request: {}
   workflow_dispatch:
     inputs:
       feedstock:
@@ -71,13 +66,6 @@ concurrency:
 
 env:
   OSV_SCANNER_VERSION: "2.7.1"
-  # TEMP rehearsal parameters for the pilot (removed before merge) — the
-  # dispatch inputs take precedence when set; these fire the pilot legs on
-  # pull_request.
-  PILOT_FEEDSTOCK: "fontist"
-  PILOT_RUNNER: "macos-15"  # (runs-on is hardcoded in the temp shape; this rides for the revert record)
-  PILOT_TEBAKO_URL: "https://github.com/ronaldtse/tebako/releases/download/rehearsal-vulnscan-20261127/tebako-main-fe5c34eea-macos-arm64"
-  PILOT_TEBAKO_SHA256: "5fdd1dc0efa35c1957800de29b357c08c9158317bf24e36690eced0808d32378"
 
 jobs:
   plan:
@@ -87,7 +75,7 @@ jobs:
     steps:
       - id: fleet
         env:
-          ONLY: ${{ inputs.feedstock || env.PILOT_FEEDSTOCK }}
+          ONLY: ${{ inputs.feedstock }}
         run: |
           set -euo pipefail
           # The scan fleet — every tebako-packages feedstock that releases
@@ -116,10 +104,7 @@ jobs:
 
   scan:
     needs: plan
-    # TEMP (pilot rehearsal): hardcoded to the staged binary's platform —
-    # env is not a valid expression context for runs-on, and the revert
-    # restores the dispatch form: inputs.runner || 'ubuntu-24.04'.
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
@@ -159,8 +144,8 @@ jobs:
           GH_TOKEN: ${{ secrets.TEBAKO_CI_PAT_TOKEN }}
           REPO: ${{ matrix.repo }}
           TAG: ${{ steps.release.outputs.tag }}
-          OVERRIDE_URL: ${{ inputs.tebako_tools_url || env.PILOT_TEBAKO_URL }}
-          OVERRIDE_SHA256: ${{ inputs.tebako_tools_sha256 || env.PILOT_TEBAKO_SHA256 }}
+          OVERRIDE_URL: ${{ inputs.tebako_tools_url }}
+          OVERRIDE_SHA256: ${{ inputs.tebako_tools_sha256 }}
         run: |
           set -euo pipefail
           mkdir -p sbom
